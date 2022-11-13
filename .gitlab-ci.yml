@@ -1,0 +1,9 @@
+build:
+  stage: build
+  tags: [windows]
+  script:
+    - ./build-installer.ps1
+  artifacts:
+    paths:
+      - ./installer/Output/dep-installer.exe
+    expire_in: never
