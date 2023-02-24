@@ -11,8 +11,8 @@ import (
 )
 
 type RepositoryXML struct {
-	XMLName      xml.Name        `xml:"repository"`
-	Dependencies []DependencyXML `xml:"dependency"`
+	XMLName              xml.Name                `xml:"repository"`
+	Dependencies         []DependencyXML         `xml:"dependency"`
 }
 
 type DependencyXML struct {
@@ -20,6 +20,7 @@ type DependencyXML struct {
 	Name     string   `xml:"name,attr"`
 	Url      string   `xml:"url,attr"`
 	Revision string   `xml:"revision,attr"`
+	Internal string   `xml:"internal,attr"`
 }
 
 type Dependency struct {
@@ -126,9 +127,14 @@ func alreadyProcessed(current DependencyXML, list []DependencyXML) bool {
 }
 
 func main() {
+	type ProcessingDirectory struct {
+		Path     string
+		IsTopDir bool
+	}
+
 	depsProcessed := []DependencyXML{}
-	directories := []string{"./"}
-	var currentDirectory string
+	directories := []ProcessingDirectory{{Path: "./", IsTopDir: true}}
+	var currentDirectory ProcessingDirectory
 
 	depsDir := pathToDeps()
 	checkDepsDirectory(depsDir)
@@ -136,16 +142,20 @@ func main() {
 	for len(directories) != 0 {
 		currentDirectory, directories = directories[0], directories[1:]
 
-		repository := readRepositoryXML(currentDirectory)
+		repository := readRepositoryXML(currentDirectory.Path)
 		if repository == nil {
 			fmt.Printf("-----------------\n")
-			fmt.Printf("no repository.xml in %v\n", currentDirectory)
+			fmt.Printf("no repository.xml in %v\n", currentDirectory.Path)
 			continue
 		}
 
 		for i := 0; i < len(repository.Dependencies); i++ {
 			fmt.Printf("-----------------\n")
 			dep := repository.Dependencies[i]
+
+			if dep.Internal == "true" && !currentDirectory.IsTopDir {
+				continue
+			}
 
 			if len(dep.Revision) == 0 {
 				dep.Revision = "master"
@@ -176,7 +186,10 @@ func main() {
 				panic(err)
 			}
 
-			directories = append(directories, depDir)
+			directories = append(directories, ProcessingDirectory{
+				Path:     depDir,
+				IsTopDir: false,
+			})
 			depsProcessed = append(depsProcessed, dep)
 		}
 	}

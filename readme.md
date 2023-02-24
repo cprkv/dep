@@ -9,4 +9,4 @@
 
 ### actual build:
 
-- run `./build.ps1`
+- run `./build-installer.ps1`
