@@ -12,6 +12,7 @@ release:
   rules:
     - if: $CI_COMMIT_TAG
   script:
+    - go install gitlab.com/gitlab-org/release-cli/cmd/release-cli@latest
     - echo "Create release"
   release:
     tag_name: '$CI_COMMIT_TAG'
