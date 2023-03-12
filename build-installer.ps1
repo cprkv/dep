@@ -1,5 +1,7 @@
+Remove-Item release/installer.exe -ErrorAction SilentlyContinue
 go build -ldflags '-s' -o installer/dep.exe
-cd installer
-rm -r Output -ErrorAction SilentlyContinue
-."C:\Program Files (x86)\Inno Setup 6\Compil32.exe" /cc .\main.iss
-cd ..
+Set-Location installer
+Remove-Item -r Output -ErrorAction SilentlyContinue
+."C:\Program Files (x86)\Inno Setup 6\iscc.exe" .\main.iss
+Set-Location ..
+Move-Item installer/Output/dep-installer.exe release/installer.exe
