@@ -11,8 +11,14 @@ import (
 )
 
 type RepositoryXML struct {
-	XMLName              xml.Name                `xml:"repository"`
-	Dependencies         []DependencyXML         `xml:"dependency"`
+	XMLName  xml.Name     `xml:"repository"`
+	Features []FeatureXML `xml:"feature"`
+}
+
+type FeatureXML struct {
+	XMLName      xml.Name        `xml:"feature"`
+	Name         string          `xml:"name,attr"`
+	Dependencies []DependencyXML `xml:"dependency"`
 }
 
 type DependencyXML struct {
@@ -20,7 +26,7 @@ type DependencyXML struct {
 	Name     string   `xml:"name,attr"`
 	Url      string   `xml:"url,attr"`
 	Revision string   `xml:"revision,attr"`
-	Internal string   `xml:"internal,attr"`
+	Features string   `xml:"features,attr"`
 }
 
 type Dependency struct {
@@ -110,13 +116,43 @@ func executeGit(depsDir string, outType OutputType, args ...string) (string, err
 	return outString, nil
 }
 
+// restoreDependency returns cloned path
+func restoreDependency(dep DependencyXML) string {
+	depsDir := pathToDeps()
+	checkDepsDirectory(depsDir)
+
+	depDir := filepath.Join(depsDir, dep.Name)
+
+	fmt.Printf("%v: %v#%v\n", depDir, dep.Url, dep.Revision)
+
+	out, err := executeGit(depsDir, CaptureOutput, "clone", dep.Url, dep.Name)
+	if err != nil {
+		if !strings.Contains(out, "already exists and is not an empty directory") {
+			panic(out)
+		}
+	}
+
+	_, err = executeGit(depDir, RedirectOutput, "checkout", dep.Revision)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = executeGit(depDir, RedirectOutput, "pull")
+	if err != nil {
+		panic(err)
+	}
+
+	return depDir
+}
+
 func alreadyProcessed(current DependencyXML, list []DependencyXML) bool {
 	for i := 0; i < len(list); i++ {
 		if list[i].Name != current.Name {
 			continue
 		}
 
-		if list[i].Revision == current.Revision && list[i].Url == current.Url {
+		if list[i].Revision == current.Revision &&
+			list[i].Url == current.Url {
 			return true
 		}
 
@@ -126,14 +162,45 @@ func alreadyProcessed(current DependencyXML, list []DependencyXML) bool {
 	return false
 }
 
+func makeFeatureName(dependencyName, featureName string) string {
+	return dependencyName + ":" + featureName
+}
+
+func isFeatureEnabled(dependencyName, featureName string, enabledFeatures []string) bool {
+	featureFullName := makeFeatureName(dependencyName, featureName)
+	for k := 0; k < len(enabledFeatures); k++ {
+		if enabledFeatures[k] == featureFullName {
+			return true
+		}
+	}
+	return false
+}
+
+func enableFeatures(dependencyName, features string, enabledFeatures []string) []string {
+	if len(features) == 0 {
+		features = "main"
+	} else {
+		features = "main," + features
+	}
+	featuresArr := strings.Split(features, ",")
+	for i := 0; i < len(featuresArr); i++ {
+		feature := makeFeatureName(dependencyName, featuresArr[i])
+		enabledFeatures = append(enabledFeatures, feature)
+	}
+	return enabledFeatures
+}
+
 func main() {
 	type ProcessingDirectory struct {
 		Path     string
+		Name     string
 		IsTopDir bool
 	}
 
+	enabledFeatures := []string{}
+
 	depsProcessed := []DependencyXML{}
-	directories := []ProcessingDirectory{{Path: "./", IsTopDir: true}}
+	directories := []ProcessingDirectory{{Path: "./", IsTopDir: true, Name: "root"}}
 	var currentDirectory ProcessingDirectory
 
 	depsDir := pathToDeps()
@@ -149,51 +216,54 @@ func main() {
 			continue
 		}
 
-		for i := 0; i < len(repository.Dependencies); i++ {
-			fmt.Printf("-----------------\n")
-			dep := repository.Dependencies[i]
+		if currentDirectory.IsTopDir {
+			// all features enabled for root
+			for k := 0; k < len(repository.Features); k++ {
+				featureName := makeFeatureName(currentDirectory.Name, repository.Features[k].Name)
+				enabledFeatures = append(enabledFeatures, featureName)
+			}
+		}
 
-			if dep.Internal == "true" && !currentDirectory.IsTopDir {
+		for k := 0; k < len(repository.Features); k++ {
+			feature := repository.Features[k]
+			deps := feature.Dependencies
+
+			if !isFeatureEnabled(currentDirectory.Name, feature.Name, enabledFeatures) {
+				fmt.Printf("feature %s:%s disabled\n", currentDirectory.Name, feature.Name)
 				continue
 			}
 
-			if len(dep.Revision) == 0 {
-				dep.Revision = "master"
-			}
+			for i := 0; i < len(deps); i++ {
+				fmt.Printf("-----------------\n")
+				dep := deps[i]
 
-			if alreadyProcessed(dep, depsProcessed) {
-				continue
-			}
-
-			depDir := filepath.Join(depsDir, dep.Name)
-
-			fmt.Printf("%v: %v#%v\n", depDir, dep.Url, dep.Revision)
-
-			out, err := executeGit(depsDir, CaptureOutput, "clone", dep.Url, dep.Name)
-			if err != nil {
-				if !strings.Contains(out, "already exists and is not an empty directory") {
-					panic(out)
+				if len(dep.Revision) == 0 {
+					dep.Revision = "master"
 				}
-			}
 
-			_, err = executeGit(depDir, RedirectOutput, "checkout", dep.Revision)
-			if err != nil {
-				panic(err)
-			}
+				enabledFeatures = enableFeatures(dep.Name, dep.Features, enabledFeatures)
 
-			_, err = executeGit(depDir, RedirectOutput, "pull")
-			if err != nil {
-				panic(err)
-			}
+				if alreadyProcessed(dep, depsProcessed) {
+					continue
+				}
 
-			directories = append(directories, ProcessingDirectory{
-				Path:     depDir,
-				IsTopDir: false,
-			})
-			depsProcessed = append(depsProcessed, dep)
+				depDir := restoreDependency(dep)
+
+				directories = append(directories, ProcessingDirectory{
+					Path:     depDir,
+					Name:     dep.Name,
+					IsTopDir: false,
+				})
+				depsProcessed = append(depsProcessed, dep)
+			}
 		}
 	}
 
 	fmt.Printf("-----------------\n")
 	fmt.Printf("all dependencies fetched!\n")
+	fmt.Printf("enabled features:\n")
+
+	for i := 0; i < len(enabledFeatures); i++ {
+		fmt.Printf("  %s\n", enabledFeatures[i])
+	}
 }
